@@ -1,10 +1,9 @@
-;nev: Dombi Botond
-;id: dbim1614
+;Dombi Botond
+;dbim1614
 ;csoport: 511
-;feladat: Projekt - Snake
+;Projekt - Snake
 
 %include 'io.inc'
-%include 'mio.inc'
 %include 'util.inc'
 %include 'gfx.inc'
 
@@ -15,13 +14,323 @@ global main
 
 section .text
 
-;nutil + nio => sajat fuggvenyek
+;Beirja a fileba a rendezett listát, névsort
+;Innen <- [sorted]
+;Ide -> f22
+nio_writefile:
+	mov eax,f22
+	mov ebx,1
+
+	call fio_open
+
+	mov ebx,sorted
+	mov ecx,[filesize]
+
+	call fio_write
+
+	call fio_close
+ret
+
+;(Submit gomb)
+;Felfüzi a listára a játékos eredményét a submit gomb megnyomására
+;Ide -> [sorted]
+;[name] - név, [score] - eredmény, [scores] - a beolvasott eredmények
+nio_writescore:
+	
+	;Addig irja a [sorted] -ba a [scores] -on beluli eredmenyeket amig az nagyobb
+	;Amikor kissebb lesz beirja a jatekos eredmenyet
+	;Ezutan visszafuzzik a [sorted] -hez a [scores]-ban maradt eredmenyeket
+
+	xor ecx,ecx
+	.loop:
+		;[previouspointer] - az elozo elem mutatoja, vagy ha az utolso file utan kell fuzni a szamot akkor az utolso
+		mov [previouspointer],ecx
+
+		cmp ecx,[filesize]
+		jge .previous
+		.name:
+			mov ebx,[scores+ecx]
+
+			mov [sorted+ecx],bl
+
+			cmp bl,0
+			je .endname
+
+			inc ecx
+			jmp .name
+		.endname:
+			mov [sorted+ecx],bl
+
+			inc ecx
+			mov ebx,[scores+ecx]
+
+			mov [sorted+ecx],ebx
+
+			cmp ebx,[score]
+			jl .previous
+
+			add ecx,4
+
+			jmp .loop
+	.previous:
+		mov ecx,[previouspointer]
+		;[tmpfilesize] - a beolvasott eredmenyek mutatoja, ezt folytatjuk majd
+		mov [tmpfilesize],ecx
+
+	mov edx,ecx
+	;edx a [sorted] indexe
+	;ecx a [name] indexe (bejarjuk a nevet es berakjuk a sorted-be)
+
+	xor ecx,ecx
+	.writename:
+		mov ebx,[name+ecx]
+		cmp bl,0
+		je .endwrite
+
+		mov [sorted+edx],bl
+
+		inc ecx
+		inc edx
+		jmp .writename
+	.endwrite:
+	mov [sorted+edx],bl
+	inc edx
+
+	mov ebx,[score]
+	mov [sorted+edx],ebx
+
+	add edx,4
+
+	;edx a [sorted] indexe tovabbra is
+	;ecx most a [scores] indexe, tehat beirjuk a [sorted]-be a maradek [scores]-t
+
+	mov ecx,[tmpfilesize]
+
+	.loopend:
+		cmp ecx,[filesize]
+		jge .finish
+		.nameend:
+			mov ebx,[scores+ecx]
+
+			mov [sorted+edx],bl
+
+			cmp bl,0
+			je .endnameend
+
+			inc ecx
+			inc edx
+			jmp .nameend
+		.endnameend:
+			mov [sorted+edx],bl
+
+			inc edx
+			inc ecx
+			mov ebx,[scores+ecx]
+
+			mov [sorted+edx],ebx
+
+			add edx,4
+			add ecx,4
+
+			jmp .loopend
+	.finish:
+
+	;Frissitjuk a filesize-t hogy tudjuk kiiratni azt teljese egeszeben, mostmar 1-el tobb eredemnyunk van
+	mov [filesize],edx
+
+ret
 
 
+;Beolvassa az eredmenyeket
+;Ide -> [scores]
+;Innen <- f22
+nio_readscores:
+	push eax
+	push ebx
+	push ecx
+	push edx
+
+	mov eax,f22
+	mov ebx,0
+
+	call fio_open
+
+	mov ebx,scores
+	mov ecx,1024
+
+	call fio_read
+
+	mov [filesize],edx
+
+	call fio_close
+
+	pop edx
+	pop ecx
+	pop ebx
+	pop eax
+ret
+
+
+;Atalakitja az eredmenyt stringé
+;Innen <- [score]
+;Ide -> [scorestr]
+nscoretostring:
+	push eax	
+	push ebx	
+	push ecx
+
+	xor ecx,ecx
+	mov eax,[score]
+	.cycle:
+	mov ebx,10
+	cdq
+	idiv ebx
+
+	add edx,48
+	push edx
+
+	inc ecx
+
+	cmp eax, 0
+	jne .cycle
+	.end:
+
+	mov eax,0
+
+	.heap:
+		cmp ecx,0
+		je .endh
+
+		dec ecx
+		
+		pop edx
+		mov [scorestr+eax],edx
+
+		inc eax
+		jmp .heap
+	.endh:
+
+	pop ecx
+	pop ebx
+	pop eax
+ret
+
+
+;A popup ablak esetében, a user gépelését kezeli le
+;Innen <- loop gfx_getevent
+;Ide -> [name]
+nnameread:
+	push eax
+	push ebx
+	push ecx
+
+	mov [event],word 0
+
+	xor ecx,ecx
+	.getendofstr:
+		cmp [name+ecx],word 0
+		je .endofstr
+		inc ecx
+		jmp .getendofstr
+	.endofstr:
+
+	.key:
+		call gfx_getevent
+
+		cmp eax,0
+		jl .safetycheck
+
+		cmp eax,1
+		je .mouse
+
+		cmp eax, 8
+		je .pop
+		cmp eax,'0'
+		jl .none
+		cmp eax,'9'
+		jle .push
+		cmp eax,'A'
+		jl .none
+		cmp eax,'Z'
+		jle .push
+		cmp eax,'a'
+		jl .none
+		cmp eax,'z'
+		jg .none
+		
+		mov [pressed],eax
+		sub eax,32
+		jmp .pushsafety
+
+		.push:
+
+		mov [pressed],eax
+
+		.pushsafety:
+
+		cmp ecx,10
+		jge .none
+
+		mov [name+ecx],eax
+		inc ecx
+		mov [name+ecx],word 0
+
+		jmp .none
+		.pop:
+
+		dec ecx
+		mov [name+ecx],word 0
+
+		jmp .none
+		.mouse:
+
+		mov [event],word 1
+
+		jmp .none
+
+		;Kezeli a hibat (amit eszleltem gyors gepelesnel)
+		;A gombok, legalabbis nalam neha csak minusz erteket adnak vissza
+		;Tehat -48 at kapok, mintha felemeltem volna a '0' billentyut pedig szerinte le se nyomtam azt
+		;Ezt kezeli le, ugy hogy megnezi a negativ szam eseteben, hogy annak pozitiva volt-e az elozo
+		;Ha igen nincs amit tennunk kene, ha nem akkor kiiratjuk
+		.safetycheck:
+			push ecx
+			imul eax,-1
+			pop ecx
+
+			mov eax,[pressed]
+
+			cmp eax,[pressed]
+			je .none
+
+			cmp eax,'0'
+			jl .none
+			cmp eax,'9'
+			jle .pushsafety
+			cmp eax,'A'
+			jl .none
+			cmp eax,'Z'
+			jle .pushsafety
+			cmp eax,'a'
+			jl .none
+			cmp eax,'z'
+			jle .pushsafety
+
+		.none:
+
+		test eax,eax
+		jnz .key
+	
+	pop ecx
+	pop ebx
+	pop eax
+ret
+
+;Megnezi hogy a mouse koordinatai x1 x2 y1 y2 kozott van-e
+;[x_start] - [x_end] kozott
+;[y_start] - [y_end] kozott
 nutil_mousecheck:
-;ellenorzi egy x1,x2 es y1,y2 koordinata kozott a mouse jelenletet
-;hover = 1 ha igen
-;hover = 0 ha nem
+
 	push eax
 	push ebx
 
@@ -42,8 +351,6 @@ nutil_mousecheck:
 
 	mov [hover],word 1
 
-	;end
-
 	.end:
 
 	pop ebx
@@ -51,9 +358,13 @@ nutil_mousecheck:
 	
 ret
 
+;Beolvas egy kepet
+;Innen <- ebx
+;Ide -> edx
+;[tmpwidth] tarolja majd a szelesseget
+;[tmpheihgt] tarolja majd a magassagot
+;A kepunk tarol 4 byte szelesseget, 4 byte magassagot és magasság * szélességnyi byteot
 nio_readimg:
-;beolvas a memoriaba egy filet, igazabol egy kepet
-;az elso 8 byteja, fejenkent 4-4 a hosszusag es szelesseg a tobbi RGBA
 	push edx
 	mov eax,ebx
 	mov ebx,0
@@ -77,8 +388,9 @@ nio_readimg:
 	call fio_close
 ret
 
+;Lehelyez egy kepet a kepernyore
+;[tmpx] és [tmpy] koordinátátol kezdödöen
 nio_placeimg:
-;elhelyezi a beolvasott kepet a kepernyon
 	push eax
 
 	mov ebx,[tmpy]
@@ -87,14 +399,21 @@ nio_placeimg:
 	imul ebx,4
 	mov [mapoffset],ebx
 
+	;[mapoffset] - segitsegevel toljuk el a sorokat, tehat a kovetkezo sorba irjuk majd a pixeleket
+	;kezdeti erteke a tmpx * tmpy * 4 (mutatokent hasznaljuk)
+
 	pop eax
 
+	;dupla forciklus
+	;[i] - szellesig megy
+	;[j] - magassagig
 
 	mov [i], word 1
 	mov [j], word 1
 	.sor:
 		mov ecx,[i]
 
+		;Ha kifutunk a szelessegbol ugrunk a kovetkezo sorra
 		mov edx,[tmpwidth]
 		cmp ecx,edx
 		jg .sorvege
@@ -109,21 +428,30 @@ nio_placeimg:
 		mov ebx,ecx
 		dec ebx
 
+		;A [mapoffset]-hez folyamatosan adjuk az (i-1) * 4 -et
+		;Igy irodik ki a sor
+
 		imul ebx,4
 		add ebx,[mapoffset]
 
 		pop eax
 
+		;A gfx_map pointeret atadjuk edx-be
 		mov edx,[mappointer]
 
 		push ecx
+
+		;Amennyiben alpha channel nem halvany, tehat egyaltalan nem attetszo akkor iratjuk
+		;Azaz nincs alpha blending :/
 
 		mov ecx,[eax+3]
 		cmp cl,255
 
 		jg .alphaugras
 
-		;Magamnak - Gond van a filejaimmal ha alpha channel van (Png nem 256 color?)
+		;Gond van a filejaimmal ha alpha channel van (Png 256 color?)
+
+		;Beszinezzuk a pixeleket
 
 		mov ecx,[eax+2]
 		mov [edx+ebx],cl
@@ -132,21 +460,23 @@ nio_placeimg:
 		mov ecx,[eax]
 		mov [edx+ebx+2],cl
 
-
 		.alphaugras:
 
-
 		pop ecx
+
 		.sorkiugrik:
 
+		;Vege a sornak (ugrassal nem idejovunk hulyeseg a neve)
 		add eax,4
 		inc ecx
+		;Noveljuk i-t, uj pixel jon a soron
 		mov [i],ecx
 
 		jmp .sor
 	.sorvege:
 		mov ecx,[j]
 
+		;Ha kifutunk a magassagbol vege a kiiratasnak
 		mov edx,[tmpheight]
 		cmp ecx,edx
 		je .vege
@@ -156,9 +486,9 @@ nio_placeimg:
 		cmp edx,HEIGHT
 		je .vege
 
-
 		mov ebx,[mapoffset]
 
+		;A sorhoz hozzaadjuk a kepernyo szelesseget * 4, hogy uj sorra irjuk a kovetkezo pixel sort
 		add ebx, WIDTH*4
 		mov [mapoffset],ebx
 
@@ -171,21 +501,26 @@ nio_placeimg:
 
 ret
 
+
+;Beolvassuk a font-ot (Nem optimalizalt font)
 nio_readfont:
-;beolvassa a fontot (sajatos file)
 	mov eax,f0
 	mov ebx,0
 	call fio_open
 
 	mov ebx,font
-	mov ecx,115200
+	mov ecx,302400
 	call fio_read
 
 	call fio_close
 ret
 
+;Kiiratjuk a font segitsegevel a string-et a kepernyore
+;Innen <- esi
+;[tmpx] és [tmpy] koordinataktol kezdodoen
+;A font is egy "kep", minden 8400 byteonkent tarolunk egy magassagot, szelesseget és utána a pixeleket
 nio_writestr:
-;kiir egy stringet az adott font segitsegevel
+	
 	mov eax,[tmpy]
 	imul eax,WIDTH
 	add eax,[tmpx]
@@ -211,32 +546,57 @@ nio_writestr:
 
 	.szam:
 
+		;Ha szamot iratunk ki akkor eltoljuk annyiszor 8400-el
+		;De hozzadjuk a 26 * 8400-at is, mert 26 szamunk van
 		sub eax,'0'
-		imul eax,3200
-		add eax,83200
+		imul eax,8400
+		add eax,218400
 
 		jmp .draw
 	.betu:
 
+		;Eltoljuk az abc sorrendbeli indexevel a szamot * 8400 -el
 		sub eax,'A'
-		imul eax,3200
+		imul eax,8400
 
 		jmp .draw
 	.draw:
 		push ecx
+			;A mapoffset megkapja a tmpoffset erteket, tehat a karakterek eltolasat (lasd lent)
 			mov ecx,[tmpoffset]
 			mov [mapoffset],ecx
+
+			push eax
+
+			add eax,font
+
+			;Kiolvassuk a magassagot és szélességet
+
+			mov ebx,[eax]
+			mov [tmpwidth],ebx
+
+			mov ebx,[eax+4]
+			mov [tmpheight],ebx
+
+			pop eax
+
+			add eax,8
+
 			xor ecx,ecx
 			xor ebx,ebx
 
+			;Kiirjuk a magassag * szelesseg mennyisegu pixelt
+			;ecx - soron levo pixel indexe
 			.drawcycle:
-				cmp ecx,20
+				cmp ecx,[tmpwidth]
 				je .drawcycle_end
 
 				push ecx
 
 				imul ecx,4
+				;[mapoffset] - itt is a sorokat tolja
 				add ecx,[mapoffset]
+				;[mappointer] - itt is a gfx_map pointeret tarolja
 				add ecx,[mappointer]
 
 				push eax
@@ -246,14 +606,21 @@ nio_writestr:
 				mov edx,[eax+3]
 				cmp dl,255
 
+				;Ha nincs alpha, vagyis kicsit is attetszo akkor ugrunk
 				jg .alphaugras
 
-				mov edx,[eax]
-				mov [ecx], word 80
-				mov edx,[eax+1]
-				mov [ecx+1], word 80
-				mov edx,[eax+2]
-				mov [ecx+2], word 80
+				push ebx
+
+				mov ebx,[colorg]
+				mov [ecx+1], bl
+
+				mov ebx,[colorr]
+				mov [ecx+2], bl
+
+				mov ebx,[colorb]
+				mov [ecx], bl
+
+				pop ebx
 
 				.alphaugras:
 
@@ -267,33 +634,46 @@ nio_writestr:
 				jmp .drawcycle
 
 			.drawcycle_end:
-				cmp ebx,40
+				cmp ebx,[tmpheight]
 				je .end
 
+				;Eltoljuk a mapoffset-et hogy a kovetkezo sorra irjuk a pixeleket
 				mov ecx,[mapoffset]
 				add ecx, WIDTH*4
+
 				mov [mapoffset],ecx
+
 				xor ecx,ecx
 
 				inc ebx
 				jmp .drawcycle
 			.end:
-			mov ecx,[tmpoffset]
-			add ecx,80
+
+			mov ecx,[tmpwidth]
+
+			imul ecx,4
+			add ecx,[tmpoffset]
+			add ecx,8
+
+			;A [tmpoffset] tarolja az egymas utani karakterek eltolasat
 			mov [tmpoffset],ecx
 
 		pop ecx
 		jmp .back
 	.cycle_end:
 
-
-
 ret
 
 main:
+
+	;Beolvassuk a fontot
 	call nio_readfont
 
-	;Betolt minden szukseges kepet
+	;Beolvassuk az osszes kepet (Kicsit csunya tudom)
+	;ebx mindig a fileneve lasd lent f1,f2,f3....
+	;edx a pixel tomb
+	;minden kephez jar egy magassag es szelesseg, ezt kulon vettem mert ugy gondoltam az elejen igy egyszerubb
+
 	mov ebx,f1
 	mov edx,img_background
 	call nio_readimg
@@ -430,7 +810,63 @@ main:
 	mov eax,[tmpheight]
 	mov [img_toplist_h],eax
 
-	;Grafika inicializalasa
+	mov ebx,f18
+	mov edx,img_btn_menu
+	call nio_readimg
+	mov eax,[tmpwidth]
+	mov [img_btn_menu_w],eax
+	mov eax,[tmpheight]
+	mov [img_btn_menu_h],eax
+
+	mov ebx,f19
+	mov edx,img_btn_menu_hover
+	call nio_readimg
+	mov eax,[tmpwidth]
+	mov [img_btn_menu_hover_w],eax
+	mov eax,[tmpheight]
+	mov [img_btn_menu_hover_h],eax
+
+	mov ebx,f20
+	mov edx,img_btn_submit
+	call nio_readimg
+	mov eax,[tmpwidth]
+	mov [img_btn_submit_w],eax
+	mov eax,[tmpheight]
+	mov [img_btn_submit_h],eax
+
+	mov ebx,f21
+	mov edx,img_btn_submit_hover
+	call nio_readimg
+	mov eax,[tmpwidth]
+	mov [img_btn_submit_hover_w],eax
+	mov eax,[tmpheight]
+	mov [img_btn_submit_hover_h],eax
+
+	mov ebx,f23
+	mov edx,img_s_20
+	call nio_readimg
+	mov eax,[tmpwidth]
+	mov [img_s_20_w],eax
+	mov eax,[tmpheight]
+	mov [img_s_20_h],eax
+
+	mov ebx,f24
+	mov edx,img_h_20
+	call nio_readimg
+	mov eax,[tmpwidth]
+	mov [img_h_20_w],eax
+	mov eax,[tmpheight]
+	mov [img_h_20_h],eax
+
+	mov ebx,f25
+	mov edx,img_a_20
+	call nio_readimg
+	mov eax,[tmpwidth]
+	mov [img_a_20_w],eax
+	mov eax,[tmpheight]
+	mov [img_a_20_h],eax
+
+	;A grafika elkezdodik (gfxdemo.asm-bol van)
     mov		eax, WIDTH
 	mov		ebx, HEIGHT
 	mov		ecx, 0	
@@ -439,14 +875,16 @@ main:
 	
 	test	eax, eax
 	jnz		.mainloop
-
+	
 	mov		eax, error
 	call	io_writestr
 	call	io_writeln
 	ret
 
+;A loop ami ismetlodik mindig
 .mainloop:
-;A stage szerint vagy a scoreboardot, jatekot, vagy a menut rajzoljuk
+	
+	;A [stage] jeloli a jatek fazisat, 0 - menu, 1 - jatek, 2 - scoreboard
 	mov eax,[stage]
 	cmp eax,0
 	je .menu
@@ -456,13 +894,13 @@ main:
 
 	jmp .scoreboard
 
-	.menu:;Stage = 0
+	;Stage = 0, vagyis itt rajzolodik a menu
+	.menu:
 
 		call gfx_map
 		mov [mappointer], eax
-		mov [p], eax
 
-		;Hatter
+		;Kirajzoljuk a hatteret
 
 		mov [tmpy],word 0
 		mov [tmpx],word 0
@@ -476,7 +914,7 @@ main:
 		mov eax,img_background
 		call nio_placeimg
 
-		;Menuk
+		;Kirajzoljuk a menuket
 
 		mov [tmpy],word 240
 		mov [tmpx],word 280
@@ -535,37 +973,41 @@ main:
 		mov eax,img_menu_scoreboard
 		call nio_placeimg
 
-		;Cursor kezeles
+		;Kezeljuk a cursort
+		;Hover + Click
 
 		mov [tmpx],word 280
 
-		call gfx_getevent
-		mov [event],eax
-
 		call gfx_getmouse
 
+		;Megadjuk a hatarokat
 		mov [x_start],word 280
 		mov [x_end],word 744
 		mov [y_start],word 240
 		mov [y_end],word 310
 
+		;Megnezzuk ott van-e a mouse
 		call nutil_mousecheck
 
+		;Ha igen hover lep fel, tehat lehet hogy clickelunk is eppen
 		cmp [hover],word 0
 		je .nohover1
 
-		;Cursor menuk kezelese
-		;Egyelore hianyos (Medium + Hard nem mukodik)
 		.hover1:
+			;Az elso menun rajta van az eger
 			push eax
 
 			mov eax,[event]
 			cmp eax,1
 
+			;Eppen nem clickeltunk tehat nincs amit kezelni
 			jne .noclick1
 
+			;Clickeltunk igy tehat elvegezzuk a szukseges dolgokat
+			;Easy gomb
 			pop eax
 
+			;Nehezseg 0, es ugrunk a jatekra stage -> 1
 			mov [difficulty], word 0
 			mov [stage], word 1
 
@@ -573,6 +1015,7 @@ main:
 
 			.noclick1:
 
+			;Kirajzoljuk a hover menut az adott menure
 			mov [tmpy],word 240
 
 			mov eax,[img_menu_easy_hover_w]
@@ -586,6 +1029,7 @@ main:
 
 			pop eax
 		.nohover1:
+			;Johet a kovetkezo gomb hover kezelese... igy tovabb
 			mov [y_start],word 340
 			mov [y_end],word 410
 
@@ -596,18 +1040,34 @@ main:
 		.hover2:
 			push eax
 
-			mov [tmpy],word 340
+			mov eax,[event]
+			cmp eax,1
 
-			mov eax,[img_menu_medium_hover_w]
-			mov [tmpwidth],eax
+			jne .noclick2
 
-			mov eax,[img_menu_medium_hover_h]
-			mov [tmpheight],eax
-
-			mov eax,img_menu_medium_hover
-			call nio_placeimg
-
+			;Medium gomb
 			pop eax
+
+			;Nehezseg 1, es ugrunk a jatekra stage -> 1
+			mov [difficulty], word 1
+			mov [stage], word 1
+
+			jmp .game_init
+
+			.noclick2:
+
+				mov [tmpy],word 340
+
+				mov eax,[img_menu_medium_hover_w]
+				mov [tmpwidth],eax
+
+				mov eax,[img_menu_medium_hover_h]
+				mov [tmpheight],eax
+
+				mov eax,img_menu_medium_hover
+				call nio_placeimg
+
+				pop eax
 		.nohover2:
 			mov [y_start],word 440
 			mov [y_end],word 510
@@ -616,8 +1076,24 @@ main:
 
 			cmp [hover],word 0
 			je .nohover3
-		.hover3:
+		.hover3:	
 			push eax
+
+			mov eax,[event]
+			cmp eax,1
+
+			jne .noclick3
+
+			;Hard gomb
+			pop eax
+
+			;Nehezseg 2, es ugrunk a jatekra stage -> 2
+			mov [difficulty], word 2
+			mov [stage], word 1
+
+			jmp .game_init
+
+			.noclick3:
 
 			mov [tmpy],word 440
 
@@ -649,7 +1125,10 @@ main:
 
 			jne .noclick4
 
+			;Exit gomb (x)
 			pop eax
+
+			;A program vegere ugrunk -> gfx_destroy
 			jmp .end
 
 			.noclick4:
@@ -684,8 +1163,10 @@ main:
 
 			jne .noclick5
 
+			;A scoreboard gomb
 			pop eax
 
+			;Beugrunk a scoreboardba stage -> 2
 			mov [stage], word 2
 
 			jmp .scoreboard_init
@@ -706,10 +1187,24 @@ main:
 			pop eax
 		.nohover5:
 
-	jmp .mapolas
-	;A jatek inicializalasa (Stage=0 - > Stage = 1)
+	jmp .mapping
+	
+	;Inicializaljuk a jatekot, ide mindig csak a menubol lepunk be egyszer jatekonkent
 	.game_init:
 
+	;Nincs popup ablak
+	mov [popup],word 0
+
+	;Az irany = jobb
+	mov [direction],word 1
+
+	;Az eredmeny 0
+	mov [score],dword 0
+
+	;A neveunk 0-val kezdodik (biztonsagbol)
+	mov [name],dword 0	
+
+	;A kigyo 3 testresze, mindig (0,0) (0,1) (0,2)
 	mov [snakex], word 0
 	mov [snakex+4], word 1
 	mov [snakey], word 0
@@ -717,8 +1212,11 @@ main:
 	mov [snakex+8], word 2
 	mov [snakey+8], word 0
 
+	;A kigyo merete 3
 	mov [snakesize],word 3
 
+	;A nehezseg szerint Inicializaljuk tovabb a jatekonkent
+	;Elegge customizeolhato, kicsit tulsagosan annak akartam
 	cmp [difficulty],word 0
 	je .easy
 	cmp [difficulty],word 1
@@ -726,21 +1224,35 @@ main:
 	cmp [difficulty],word 2
 	je .hard
 
-
-	;Jatek beallitasok
+	;Easy mode
 	.easy:
+		;A kigyo merete (pixelekben)
 		mov [size], word 40
 
+		;A kigyo texturaja
 		mov eax,img_s_40
 		mov [snaketexture],eax
+
+		;Az alma texturaja
 		mov eax,img_a_40
 		mov [appletexture],eax
+
+		;A kigyo fejenek texturaja
 		mov eax,img_h_40
 		mov [headtexture],eax
+
+		;A mapnak a merete
 		mov [mapsize_x],word 24
 		mov [mapsize_y],word 16
+
+		;Ne kelljen minden lepesben kiszamolni
 		mov [mapsize],word 192
+
+		;A kigyo sebessege
 		mov [speed],word 100
+
+		;Az alma elsodleges koordinataja (mindig kozepre)
+		;Azaz x = mapszelesseg/2, y = mapmagassag/2
 
 		mov eax,[mapsize_x]
 		cdq
@@ -754,27 +1266,87 @@ main:
 		idiv ebx
 		mov [appley],eax
 
-		jmp .mapolas
-	;Medium + Hard hianyos egyelore
+		;Ugrunk is a mappinghoz, tehat rajzoljuk a jatekot
+		jmp .mapping
+
+
+	;Ugyanigy ertelmezzuk a tobbit is
+
+	;Medium mode
 	.medium:
-		mov [size], word 40
-		jmp .mapolas
+		;Itt mar 20 a kigyo merete
+		mov [size], word 20
+
+		mov eax,img_h_20
+		mov [snaketexture],eax
+
+		mov eax,img_h_20
+		mov [appletexture],eax
+
+		mov eax,img_h_20
+
+		mov [headtexture],eax
+		mov [mapsize_x],word 48
+		mov [mapsize_y],word 32
+		mov [mapsize],word 384
+		mov [speed],word 50
+
+		mov eax,[mapsize_x]
+		cdq
+		mov ebx,2
+		idiv ebx
+		mov [applex],eax
+
+		mov eax,[mapsize_y]
+		cdq
+		mov ebx,2
+		idiv ebx
+		mov [appley],eax
+		jmp .mapping
 	.hard:
 		mov [size], word 20
-	jmp .mapolas
 
-	.game:; Stage = 1 (ekkor a jatekot rajzoljuk)
+		mov eax,img_s_20
+		mov [snaketexture],eax
 
+		mov eax,img_a_20
+		mov [appletexture],eax
+
+		mov eax,img_h_20
+		mov [headtexture],eax
+
+		mov [mapsize_x],word 48
+		mov [mapsize_y],word 32
+		mov [mapsize],word 384
+		mov [speed],word 25
+
+		mov eax,[mapsize_x]
+		cdq
+		mov ebx,2
+		idiv ebx
+		mov [applex],eax
+
+		mov eax,[mapsize_y]
+		cdq
+		mov ebx,2
+		idiv ebx
+		mov [appley],eax
+		jmp .mapping
+	jmp .mapping
+
+	;Stage = 1, beleptunk a jatekba
+	.game:
+
+	;Ha van popup lekezeljuk azt (vagyis vege a jateknak mert vesztettunk)
 	cmp [popup],word 0
 	je .nopopup
 
-	;Lekezelni az irast
-	;Itt kezeljuk majd azt ha a user beirja a nevet
-	;HIANYZIK
+	;Ebben az esetben kezeljuk a nev beirasat
+	call nnameread
 
 	jmp .snakeend
+	;Nincs popup igy tovabbmegyunk
 	.nopopup:
-	;Nincs popup ablak, vagyis nincs vege a jateknak, a user nem kell irjon
 
 	mov [catch],byte 0
 
@@ -786,13 +1358,12 @@ main:
 	mov ebx,[snakex+ecx]
 	mov edx,[snakey+ecx]
 
-	;Iranykezeles
-
-	cmp [direction],byte 0
+	;Kezeljuk az iranyt, igy kiszamoljuk a kovetkezo lepest
+	cmp [direction],word 0
 	je .nulla
-	cmp [direction],byte 1
+	cmp [direction],word 1
 	je .egy
-	cmp [direction],byte 2
+	cmp [direction],word 2
 	je .ketto
 		
 		dec ebx
@@ -808,7 +1379,7 @@ main:
 		jmp .endif
 	.endif:
 
-	;Leteszteljuk a fallal valo utkozest
+	;Lekezeljuk a fallal valo utkozest
 	cmp ebx,0
 	jl .collision
 	cmp ebx,[mapsize_x]
@@ -825,12 +1396,15 @@ main:
 	.nocollision:
 
 
-	;Almaval valo utkozes
+	;Lekezeljuk az almaval valo utkozest :))
+	;Vagyis megettunk egy almat
 
 	cmp ebx,[applex]
 	jne .continue
 	cmp edx,[appley]
 	jne .continue
+
+	;Berakjuk a kigyoba az almat
 
 	mov ecx,[snakesize]
 	imul ecx,4
@@ -844,6 +1418,8 @@ main:
 
 	push ebx
 
+	;Lekezeljuk azt ha mar nemlehet tobb almat rakni
+
 	mov ebx,[mapsize]
 	cmp eax,ebx
 	jne .noend
@@ -855,8 +1431,10 @@ main:
 	.noend:
 	pop ebx
 
-	;Uj alma
+	;A kovetkezo almat generaljuk le
 	.apple_generate:
+
+		;X koordinata
 		call rand
 		mov ebx,[mapsize_x]
 		cdq
@@ -864,13 +1442,13 @@ main:
 
 		cmp edx,0
 		jge .skip1
-
 		imul edx,-1
 
 		.skip1:
 
 		mov [applex],edx
 
+		;Y coordinata
 		call rand
 		mov ebx,[mapsize_y]
 		cdq
@@ -886,6 +1464,7 @@ main:
 		mov [appley],edx
 		mov ebx,[applex]
 
+	;Leellenorizzuk hogy az alma nem-e a kigyoban van...
 	mov ecx,0
 	.apple_check:
 		cmp ecx,[snakesize]
@@ -904,7 +1483,7 @@ main:
 		jne .ok1
 
 		pop ecx
-		;Ujrageneraljuk az almat
+		;Ha igen ujrageneraljuk az almat
 		jmp .apple_generate
 
 		.ok1:
@@ -915,14 +1494,36 @@ main:
 
 	jmp .apple_check
 
-	;Legeneraltuk az almat
+	;Legeneraltuk a kovetkezo almat
 	.apple_done:
 	mov [catch], byte 1
+	mov ecx, [score]
+
+	;A nehezsegtol fuggoen adjuk az eredmenyt
+	cmp [difficulty],word 1
+	je .double
+	cmp [difficulty],word 2
+	je .triple
+
+	;1 - Easy
+	inc ecx
+	jmp .scoredone
+	.double:
+		;2 - Medium
+		add ecx,2
+		jmp .scoredone
+	.triple:
+		;3 - Hard
+		add ecx,3
+		jmp .scoredone
+	.scoredone:
+
+	mov [score],ecx
 
 	jmp .snakeend
 
 	.continue:
-	;A kigyo sajat magaval valo utkozeset is leteszteljuk
+	;A kigyo sajat magaval valo utközését is megnézzük
 
 	mov ecx,0
 	.self_check:
@@ -943,12 +1544,9 @@ main:
 
 		pop ecx
 		
-
+		;Itt vesztettünk
 		mov [popup], word 1
 		jmp .snakeend
-
-		;GAME OVER
-		;Utkoztunk
 
 		.ok2:
 
@@ -957,25 +1555,26 @@ main:
 		inc ecx
 	jmp .self_check
 
-
-	;Epitjuk a kigyot
 	.self_done:
+	;Vegeztunk az utkozesek figyelésével
 
 	push ebx
 	push edx
 
+	;Felepitjuk a kigyot, azaz a lista elejerol popolunk egyet es a vegere rakunk be egy uj elemet
+	;Amennyiben megattunk egy almat akkor nem poppolunk csak pusholunk
 	mov ecx,1
-	;A kigyo tombbol mindig "poppolunk egye elemet elolrol, es a hatara pedig pusholunk egyet"
 	.snakebuild:
-	;Pop	
 		cmp ecx,[snakesize]
 		jg .snakebuildend
 		push ecx
 
+		;Az i+1 kigyo testresz
 		imul ecx,4
 		mov ebx,[snakex+ecx]
 		mov edx,[snakey+ecx]
-		
+			
+		;Bemegy az i-edik testresz helyere
 		sub ecx,4
 		mov [snakex+ecx],ebx
 		mov [snakey+ecx],edx
@@ -984,7 +1583,9 @@ main:
 		inc ecx
 		jmp .snakebuild
 	.snakebuildend:
-	;Push
+
+	;Itt adjuk meg a kigyo fejet
+
 	pop edx
 	pop ebx
 
@@ -995,16 +1596,19 @@ main:
 
 	mov [snakex+ecx],ebx
 	mov [snakey+ecx],edx
-	
-	.snakeend:
-	;Megkezdjuk a rajzolast
 
-	call gfx_map	
+	.snakeend:
+
+	;Vege a kigyo kezelésének, igy rajzolhatunk
+
+	call gfx_map
+	;mappointer segéd map változo
 	mov [mappointer], eax
-	mov [p], eax
 
 	mov [tmpy],word 0
 	mov [tmpx],word 0
+
+	;Kirajzoljuk jatek hatteret
 
 	mov eax,[img_game_w]
 	mov [tmpwidth],eax
@@ -1015,20 +1619,20 @@ main:
 	mov eax,img_game
 	call nio_placeimg
 
-	.layer1:
+	.layer:
 		mov ecx,0
 
-		.snakeciklus:
+		.snakeloop:
 			cmp ecx,[snakesize]
-			je .snakevege
-
-			;Fej
+			je .snakeloopend
 
 			push ecx
 
 			inc ecx
 			cmp ecx,[snakesize]
 			jne .nothead
+
+			;Kirajzoljuk a fejet
 
 			dec ecx
 
@@ -1056,7 +1660,7 @@ main:
 			.nothead:
 			pop ecx
 
-			;Test
+			;Kirajzoljuk a testreszt
 
 			push ecx
 
@@ -1085,9 +1689,11 @@ main:
 			pop ecx
 
 			inc ecx
-			jmp .snakeciklus
-		;Kirajzoljuk az almat is
-		.snakevege:
+			jmp .snakeloop
+		.snakeloopend:
+
+			;Vege a kigyo rajzolasanak
+			;Kirajzoljuk az almat
 
 			mov eax,[applex]
 			imul eax,[size]
@@ -1108,31 +1714,54 @@ main:
 			mov eax,[appletexture]
 			call nio_placeimg
 
-			;cmp [catch], word 1
-			;je .mapolas
-
-			;Str kiiratas
-
-			;Kiirjuk a nehezseget a font segitsegevel
+			;Kiiratjuk a jatek nehezseget
+			;str_easy, str_medium, str_hard
 
 			cmp [difficulty],word 0
 			je .easystr
 			cmp [difficulty],word 1
 			je .mediumstr
+
+			;Szinezzuk oket a nehezseg szerint
+
+			mov [colorr],word 210
+			mov [colorg],word 0
+			mov [colorb],word 0
 			mov esi,str_hard
 
 			jmp .strend
 			.easystr:
+				mov [colorr],word 0
+				mov [colorg],word 210
+				mov [colorb],word 0
 				mov esi,str_easy
 				jmp .strend
 			.mediumstr:
+				mov [colorr],word 255
+				mov [colorg],word 165
+				mov [colorb],word 0
 				mov esi,str_medium
 			.strend:
 
 			mov [tmpx],word 260
-			mov [tmpy],word 50
+			mov [tmpy],word 35
 			call nio_writestr
 
+			;Kiirjuk az eredemnyt is
+
+			mov [colorr],word 80
+			mov [colorg],word 80
+			mov [colorb],word 80
+
+			;Atalakitjuk az eredemnyt stringbe
+			call nscoretostring
+
+			mov [tmpx],word 845
+			mov [tmpy],word 32
+
+			;Kiirjuk az eredményt
+			mov esi,scorestr
+			call nio_writestr
 
 			cmp [popup],word 0
 			jne .popup
@@ -1140,11 +1769,11 @@ main:
 			mov eax,[speed]
 			call sleep
 
-			jmp .mapolas
+			jmp .mapping
 
-
-			;Popup ablak rajzolasa ha szukseges (ideugrassal)
 			.popup:
+
+			;Popup ablak
 
 			mov [tmpy],word 244
 			mov [tmpx],word 212
@@ -1158,20 +1787,177 @@ main:
 			mov eax,img_popup
 			call nio_placeimg
 
-	jmp .mapolas
+			;Gombok = submit és menu
 
+			;Menu gomb, visszadob a menuhoz ha nem akarjuk berakni az eredményünk
+
+			mov [tmpy],word 507
+			mov [tmpx],word 295
+
+			mov eax,[img_btn_menu_w]
+			mov [tmpwidth],eax
+
+			mov eax,[img_btn_menu_h]
+			mov [tmpheight],eax
+
+			mov eax,img_btn_menu
+			call nio_placeimg
+
+			;Submit gomb, berakja az eredmenunk a listaba
+
+			mov [tmpx],word 525
+
+			mov eax,[img_btn_submit_w]
+			mov [tmpwidth],eax
+
+			mov eax,[img_btn_submit_h]
+			mov [tmpheight],eax
+
+			mov eax,img_btn_submit
+			call nio_placeimg
+
+			;A gombok kezelese
+
+			call gfx_getmouse
+
+			mov [x_start],word 295
+			mov [x_end],word 498
+			mov [y_start],word 507
+			mov [y_end],word 560
+
+			call nutil_mousecheck
+
+			cmp [hover],word 0
+			je .btn_menu_nohover
+
+
+			;A menu gomb kezelese
+			.btn_menu:
+				push eax
+
+				mov eax,[event]
+				cmp eax,1
+
+				jne .btn_menu_noclick
+
+				pop eax
+
+				;Visszadob a menube
+				mov [stage], word 0
+
+				jmp .game_init
+
+				.btn_menu_noclick:
+
+				;Kirajzoljuk a hover menu-t
+
+				mov [tmpx],word 295
+
+				mov eax,[img_btn_menu_hover_w]
+				mov [tmpwidth],eax
+
+				mov eax,[img_btn_menu_hover_h]
+				mov [tmpheight],eax
+
+				mov eax,img_btn_menu_hover
+				call nio_placeimg
+
+				pop eax
+			.btn_menu_nohover:
+				mov [x_start],word 525
+				mov [x_end],word 728
+
+				call nutil_mousecheck
+
+				cmp [hover],word 0
+				je .btn_submit_nohover
+			.btn_submit:
+				push eax
+
+				mov eax,[event]
+				cmp eax,1
+
+				jne .btn_submit_noclick
+
+				pop eax
+
+				;Kiolvassuk az eddigi neveket
+				call nio_readscores
+
+				;Beirjuk a listaba a mi nevunket is
+				call nio_writescore
+
+				;Kiirjuk fileba
+				call nio_writefile
+
+				;Kiolvassuk a mar mi nevunket is tarolo listat
+				call nio_readscores
+
+				;A scoreboardra visszuk a jatekost
+				mov [stage],word 2
+
+				jmp .game_init
+
+				.btn_submit_noclick:
+
+				mov [tmpx],word 525
+
+				mov eax,[img_btn_submit_hover_w]
+				mov [tmpwidth],eax
+
+				mov eax,[img_btn_submit_hover_h]
+				mov [tmpheight],eax
+
+				mov eax,img_btn_submit_hover
+				call nio_placeimg
+
+				pop eax
+			.btn_submit_nohover:
+
+			;Kiirjuk a nevunket amit a popup ablakba gepelunk eppen
+
+			mov [tmpx],word 260
+			mov [tmpy],word 426
+
+			mov esi,name
+
+			xor ecx,ecx
+			.length:
+				cmp [esi+ecx],word 0
+				je .lengthend
+				inc ecx
+				jmp .length
+			.lengthend:
+
+			mov eax,14
+			imul eax,ecx
+
+			mov ebx,510
+			sub ebx,eax
+
+			mov [tmpx],ebx
+
+			mov esi,name
+			call nio_writestr
+
+	jmp .mapping
+
+
+	;Stage = 2
+	;A scoreboard inicializalasa, vagyis kiolvassuk a neveket, ez egyszer fut le csak
 	.scoreboard_init:
 
-	jmp .mapolas
+	call nio_readscores
 
+	jmp .mapping
 
-	;A scoreboard (hianyos)
 	.scoreboard:
 
-	;Kirajzoljuk
-	call gfx_map	
+	;Kirajzoljuk a scoreboardot
+	call gfx_map
 	mov [mappointer], eax
-	mov [p], eax
+
+	;Kirajzoljuk a hatteret
 
 	mov [tmpy],word 0
 	mov [tmpx],word 0
@@ -1185,7 +1971,9 @@ main:
 	mov eax,img_toplist
 	call nio_placeimg
 
-	mov [tmpx],word 170
+	;Kirajzoljuk a vissza gombot (x)
+
+	mov [tmpx],word 50
 	mov [tmpy],word 640
 
 	mov eax,[img_menu_x_w]
@@ -1197,15 +1985,12 @@ main:
 	mov eax,img_menu_x
 	call nio_placeimg
 
-
-	;Az exit button kezelese
-	call gfx_getevent
-	mov [event],eax
+	;Kezeljuk a vissza gombot
 
 	call gfx_getmouse
 
-	mov [x_start],word 176
-	mov [x_end],word 270
+	mov [x_start],word 56
+	mov [x_end],word 170
 	mov [y_start],word 640
 	mov [y_end],word 710
 
@@ -1219,12 +2004,14 @@ main:
 
 	jne .noclick
 
+	;Ha clickeltunk rajta akkor visszaugrunk
+
 	mov [stage], word 0
-	jmp .mapolas
+	jmp .mapping
 
 	.noclick:
 
-	mov [tmpx],word 170
+	mov [tmpx],word 50
 	mov [tmpy],word 640
 
 	mov eax,[img_menu_x_hover_w]
@@ -1238,14 +2025,132 @@ main:
 
 	.nohover:
 
+	mov [bytesread],dword 0
 
-.mapolas:
+
+	;Beolvassuk a neveket a memoriabol
+	;Ide -> name
+	xor ecx,ecx
+	.readscore:
+		mov esi,[bytesread]
+		cmp esi,[filesize]
+		jge .endofread
+
+		;Max 10 nevet olvasunk
+
+		cmp ecx,10
+		je .endofread
+
+		xor edx,edx
+		.readname:
+			xor eax,eax
+			push edx
+				mov edx,[bytesread]
+				mov eax,[scores+edx]
+			pop edx
+
+			;Vege a nevnek
+			cmp al,0
+			je .endofname
+
+			mov [name+edx],al
+
+			inc edx
+
+			push edx
+				mov edx,[bytesread]
+				inc edx
+				mov [bytesread],edx
+			pop edx
+
+			jmp .readname
+		.endofname:
+			mov [name+edx],eax
+
+			mov edx,[bytesread]
+			inc edx
+			mov [bytesread],edx
+
+			xor eax,eax
+
+			mov eax,[scores+edx]
+
+			mov [score],eax
+
+			;Kiiratjuk a nevet
+
+			mov [colorr],word 80
+			mov [colorg],word 80
+			mov [colorb],word 80
+
+			mov [tmpx],word 220
+
+			push eax
+
+				;Persze az i-edik sorba
+				mov eax,56
+				imul eax,ecx
+
+				add eax,172
+
+				push ecx
+
+				mov [tmpy],eax
+				mov esi,name
+				call nio_writestr
+
+				pop ecx
+
+				push ecx
+
+				mov [tmpx],word 720
+
+				;Atalakitjuk az eredmenyt es azt is kiirjuk
+
+				call nscoretostring
+
+				mov esi,scorestr
+				call nio_writestr
+
+				pop ecx
+
+			pop eax
+
+			push edx
+			mov edx,[bytesread]
+			add edx,4
+			mov [bytesread],edx
+			pop edx
+
+			inc ecx
+		jmp .readscore
+	.endofread:
+
+.mapping:
+
+	;Vege a mapolasnak
+
 	call	gfx_unmap
 	call	gfx_draw
+
+	mov [event],word 0
+
+	mov eax,[direction]
+	mov [olddirection],eax
+
+	cmp [popup],word 1
+	je .skipevents
+
 .eventloop:
+	;Kezeljuk a gombokat (csak game eseteben)
 	call	gfx_getevent
-		
-	;Az iranyitas kezelese
+
+	cmp eax, 1
+	jne .nocl
+	mov [event],word 1
+
+	.nocl:
+
 	cmp		eax, 'w'
 	je .up
 	cmp		eax, 's'
@@ -1257,91 +2162,60 @@ main:
 
 	jmp .directionend
 	.up:
-		mov eax,[direction]
+		mov eax,[olddirection]
 		cmp eax,2
 		je .directionend
 
-		mov [direction], byte 0
+		mov [direction], word 0
 		jmp .directionend
 	.down:
-		mov eax,[direction]
+		mov eax,[olddirection]
 		cmp eax,0
 		je .directionend
 
-		mov [direction], byte 2
+		mov [direction], word 2
 		jmp .directionend
 	.left:
-		mov eax,[direction]
+		mov eax,[olddirection]
 		cmp eax,1
 		je .directionend
 
-		mov [direction], byte 3
+		mov [direction], word 3
 		jmp .directionend
 	.right:
-		mov eax,[direction]
+		mov eax,[olddirection]
 		cmp eax,3
 		je .directionend
 
-		mov [direction], byte 1
+		mov [direction], word 1
 		jmp .directionend
 	.directionend:
 	
 
 	cmp		eax, 23	
 	je		.end
-	cmp		eax, 27	
+	cmp		eax, 27
 	je		.end
+
 	test	eax, eax
 	jnz		.eventloop
 	
-	
-	cmp		dword [movemouse], 0
-	je		.updateoffset
-	call	gfx_getmouse
-	mov		ecx, eax
-	mov		edx, ebx
-	sub		eax, [prevmousex]
-	sub		ebx, [prevmousey]
-	sub		[offsetx], eax
-	sub		[offsety], ebx
-	mov		[prevmousex], ecx
-	mov		[prevmousey], edx
-	
-.updateoffset:
-	add		[offsetx], esi
-	add		[offsety], edi
-
-	cmp [catch],byte 1
-	je .nosleep
-
-	.nosleep:
+	.skipevents:
 
 	jmp 	.mainloop
     
+	;Kilepunk
 .end:
 	call	gfx_destroy
     ret
     
 	
 section .data
+
     title db "Snakembly - Snake written in NASM", 0
 	error db "Error:  Couldn't initialize graphics.", 0
-	
-	
-	offsetx dd 0
-	offsety dd 0
-	
-	movemouse dd 0 
-	prevmousex dd 0
-	prevmousey dd 0
-	
-	p dd 0
-	q dd 0
 
-
-	;Filenevek
-	f db "image.slx",0
-	g db "image2.slx",0
+	;File nevek
 	f0 db "font.slx",0
 	f1 db "background.slx",0
 	f2 db "easy.slx",0
@@ -1360,41 +2234,39 @@ section .data
 	f15 db "popup.slx",0
 	f16 db "h40.slx",0
 	f17 db "toplist.slx",0
+	f18 db "btnmenu.slx",0
+	f19 db "btnmenu_hover.slx",0
+	f20 db "btnsubmit.slx",0
+	f21 db "btnsubmit_hover.slx",0
+	f22 db "scores.slx",0
+	f23 db "s20.slx",0
+	f24 db "h20.slx",0
+	f25 db "a20.slx",0
 
-	;Stringek
-	str1 db "EASY",0
+	;Str-ek
 	str_easy db "EASY",0
 	str_medium db "MEDIUM",0
 	str_hard db "HARD",0
 
-	;Valtozok
-	char dd 0
-	x dd 0
-	y dd 0
-
-	;Fuggveny segedvaltozok
+	;A kep beolvasasahoz valtozok
 	tmpwidth dd 0
 	tmpheight dd 0
 	tmppointer dd 0
-	tmpf dd 0
 
+	;Elhelyezes x,y
 	tmpx dd 0
 	tmpy dd 0
 
+	;gfx_map pointer mutatoja es offset (eltolasok)
 	mappointer dd 0
 	mapoffset dd 0
 	tmpoffset dd 0
 
+	;Indexek
 	i dd 0
-	j dd 0
+	j dd 0	
 
-
-	;Dev uzenetek
-	devmsg1 db "Reading image with size of: ",0
-	devmsg2 db "Reading done.",0
-
-
-	;Kepek tombjei
+	;Fileok pixel tombjei es a hozza tartozo szelesseg + magassagok
 	img_background TIMES 3145728 DW 0
 	img_background_w dd 0
 	img_background_h dd 0
@@ -1463,59 +2335,107 @@ section .data
 	img_h_40_w dd 0
 	img_h_40_h dd 0
 
+	img_s_20 TIMES 1600 DW 0
+	img_s_20_w dd 0
+	img_s_20_h dd 0
 
-	;Font
-	font TIMES 115200 DW 0
+	img_a_20 TIMES 1600 DW 0
+	img_a_20_w dd 0
+	img_a_20_h dd 0
 
+	img_h_20 TIMES 1600 DW 0
+	img_h_20_w dd 0
+	img_h_20_h dd 0
 
-	;Alma x,y
-	applex dd 20
-	appley dd 20
+	img_btn_menu TIMES 43036 DW 0
+	img_btn_menu_w dd 0
+	img_btn_menu_h dd 0
 
+	img_btn_menu_hover TIMES 43036 DW 0
+	img_btn_menu_hover_w dd 0
+	img_btn_menu_hover_h dd 0
 
-	;A kigyo tombjei,merete
+	img_btn_submit TIMES 43036 DW 0
+	img_btn_submit_w dd 0
+	img_btn_submit_h dd 0
+
+	img_btn_submit_hover TIMES 43036 DW 0
+	img_btn_submit_hover_w dd 0
+	img_btn_submit_hover_h dd 0
+
+	;A font
+	font TIMES 302400 DW 0
+
+	;Alma koordinatai 
+	applex dd 0
+	appley dd 0
+
+	;A kigyo tombjei es merete
 	snakex TIMES 1000 dd 0
 	snakey TIMES 1000 dd 0
 	snakesize dd 0
 
-	;Irany
+	;Iranykezeles
 	direction dd 1
+	olddirection dd 1
 
-	;Fogtunk e almat?
+	;Elkaptunk egy almat?
 	catch dd 0
-
-	;Testnek, alpha channel blend
-	opacity dd 0
-
 
 	stage dd 0;0 - menu, 1 - game, 2 - scoreboard
 	difficulty dd 0;0 - easy, ...
 
-	;nutil_mousecheck segedvaltozoi
+	;A hover kezelés határai és változoi
 	x_start dd 0
 	x_end dd 0
-
 	y_start dd 0
 	y_end dd 0
 
 	hover dd 0
+
+	;Clickeltunk
 	event dd 0
 
-
-	;Jatekbeallitasok valtozoi
+	;A kigyo texturai
 	size dd 0
 	snaketexture dd 0
 	appletexture dd 0
 	headtexture dd 0
 
+	;A map merete
 	mapsize_x dd 0
 	mapsize_y dd 0
 	mapsize dd 0
 
+	;A kigyo sebessege
 	speed dd 0
 
-	;Felugro ablak kezelese
+	;Elougro ablak
 	popup dd 0
 
-	;Eredmeny
+	;Az eredmeny
 	score dd 0
+	scorestr TIMES 255 db 0
+	
+	;A nevunk
+	name TIMES 255 db 0
+
+	;A szinezes valtozoi
+	colorr dd 0
+	colorg dd 0
+	colorb dd 0
+
+	;Megnyomtunk egy gombot, gfx_getevent hibakezeles
+	pressed dd 0
+
+	;Az eredmeny es a rendezett lista
+	scores TIMES 6024 db 0
+	sorted TIMES 6024 db 0
+
+	;Offset es filemeret valtozok
+	filesize dd 0
+	bytesread dd 0
+
+	;A lista rendezesehez szukseges valtozok
+	tmpfilesize dd 0
+	previouspointer dd 0
